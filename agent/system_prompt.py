@@ -191,9 +191,21 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
             )
             if toolset
         }
+        # Coding posture prunes non-coding skill categories from the index
+        # (discovery-only — skills_list/skill_view still reach everything).
+        _hidden_cats = frozenset()
+        try:
+            from agent.coding_context import coding_hidden_skill_categories
+
+            _hidden_cats = coding_hidden_skill_categories(
+                platform=agent.platform, cwd=resolve_context_cwd()
+            )
+        except Exception:
+            _hidden_cats = frozenset()
         skills_prompt = _r.build_skills_system_prompt(
             available_tools=agent.valid_tool_names,
             available_toolsets=avail_toolsets,
+            hidden_categories=_hidden_cats or None,
         )
     else:
         skills_prompt = ""

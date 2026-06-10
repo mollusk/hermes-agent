@@ -135,6 +135,11 @@ class ContextProfile:
     ``model_hint``   — routing preference key for smart model routing
                        (extension seam; not yet consumed by the router).
     ``memory_policy``— memory namespace/weighting hint (extension seam).
+    ``hidden_skill_categories`` — skill categories pruned from the system-prompt
+                       skill index while this posture is active. Discovery-only:
+                       nothing is disabled — ``skills_list`` still returns the
+                       full catalog and ``skill_view`` loads anything. Deny-list
+                       semantics so unknown/custom categories stay visible.
     """
 
     name: str
@@ -142,6 +147,20 @@ class ContextProfile:
     guidance: str = ""
     model_hint: Optional[str] = None
     memory_policy: str = "default"
+    hidden_skill_categories: tuple[str, ...] = ()
+
+
+# Skill categories that are clearly not part of a coding workflow. Hidden from
+# the prompt's skill index in the coding posture (deny-list — anything not
+# listed here, incl. custom user categories, stays visible). Coding-adjacent
+# categories (devops, github, mcp, data-science, diagramming, research,
+# security, …) are intentionally absent.
+_NON_CODING_SKILL_CATEGORIES = (
+    "apple", "communication", "cooking", "creative", "email", "finance",
+    "gaming", "gifs", "health", "media", "music", "note-taking",
+    "productivity", "shopping", "smart-home", "social-media", "travel",
+    "yuanbao",
+)
 
 
 GENERAL_PROFILE = ContextProfile(name="general")
@@ -151,6 +170,7 @@ CODING_PROFILE = ContextProfile(
     guidance=CODING_AGENT_GUIDANCE,
     model_hint="coding",
     memory_policy="project",
+    hidden_skill_categories=_NON_CODING_SKILL_CATEGORIES,
 )
 
 _PROFILES: dict[str, ContextProfile] = {
@@ -303,6 +323,10 @@ class RuntimeMode:
             blocks.append(workspace)
         return blocks
 
+    def hidden_skill_categories(self) -> frozenset[str]:
+        """Skill categories to prune from the prompt's skill index (may be empty)."""
+        return frozenset(self.profile.hidden_skill_categories)
+
 
 def resolve_runtime_mode(
     *,
@@ -365,6 +389,22 @@ def coding_system_blocks(
 ) -> list[str]:
     """Stable system-prompt blocks for the current posture (empty when general)."""
     return resolve_runtime_mode(platform=platform, cwd=cwd, config=config).system_blocks()
+
+
+def coding_hidden_skill_categories(
+    *,
+    platform: Optional[str] = None,
+    cwd: Optional[str | Path] = None,
+    config: Optional[dict[str, Any]] = None,
+) -> frozenset[str]:
+    """Skill categories the active posture prunes from the prompt's skill index.
+
+    Empty outside the coding posture. Discovery-only: hidden skills remain
+    loadable via ``skills_list`` / ``skill_view``.
+    """
+    return resolve_runtime_mode(
+        platform=platform, cwd=cwd, config=config
+    ).hidden_skill_categories()
 
 
 def _enabled_mcp_servers(config: Optional[dict[str, Any]]) -> list[str]:
