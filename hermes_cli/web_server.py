@@ -2247,6 +2247,24 @@ async def git_branch_switch_route(body: GitBranchSwitchBody):
     return await _git_op(_web_git.branch_switch, _git_path(body.path), body.branch)
 
 
+def _session_activity_flags(s: dict, now: float) -> tuple[bool, bool]:
+    """Compute (is_active, bg_active) for a session row.
+
+    ``last_active`` (latest message timestamp) alone misses sessions doing
+    silent background work — e.g. a farmed-out Claude Code build that writes
+    no message rows for many minutes. ``last_heartbeat`` is a periodic
+    time-based ping (see ProcessRegistry / SessionDB.touch_session_heartbeat*)
+    that stays fresh while such work is in flight, so liveness is the more
+    recent of the two. ``bg_active`` additionally lets clients distinguish
+    "busy on a background task" from ordinary foreground chat activity.
+    """
+    hb = s.get("last_heartbeat") or 0
+    effective = max(s.get("last_active", s.get("started_at", 0)) or 0, hb)
+    is_active = s.get("ended_at") is None and (now - effective) < 300
+    bg_active = bool(s.get("ended_at") is None and hb and (now - hb) < 300)
+    return is_active, bg_active
+
+
 @app.get("/api/status")
 async def get_status(profile: Optional[str] = None):
     status_scope = None
@@ -2351,9 +2369,7 @@ async def get_status(profile: Optional[str] = None):
                 sessions = db.list_sessions_rich(limit=50)
                 now = time.time()
                 active_sessions = sum(
-                    1 for s in sessions
-                    if s.get("ended_at") is None
-                    and (now - s.get("last_active", s.get("started_at", 0))) < 300
+                    1 for s in sessions if _session_activity_flags(s, now)[0]
                 )
             finally:
                 db.close()
@@ -3671,10 +3687,7 @@ async def get_sessions(
             )
             now = time.time()
             for s in sessions:
-                s["is_active"] = (
-                    s.get("ended_at") is None
-                    and (now - s.get("last_active", s.get("started_at", 0))) < 300
-                )
+                s["is_active"], s["bg_active"] = _session_activity_flags(s, now)
                 if profile_name:
                     s["profile"] = profile_name
                     s["is_default_profile"] = profile_name == "default"
@@ -3785,10 +3798,7 @@ def get_profiles_sessions(
             for s in rows:
                 s["profile"] = name
                 s["is_default_profile"] = name == "default"
-                s["is_active"] = (
-                    s.get("ended_at") is None
-                    and (now - s.get("last_active", s.get("started_at", 0))) < 300
-                )
+                s["is_active"], s["bg_active"] = _session_activity_flags(s, now)
                 s["archived"] = bool(s.get("archived"))
                 merged.append(s)
         except Exception as exc:
@@ -8676,10 +8686,7 @@ async def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: 
         runs = db.list_cron_job_runs(canonical, limit=limit_n, offset=0)
         now = time.time()
         for s in runs:
-            s["is_active"] = (
-                s.get("ended_at") is None
-                and (now - s.get("last_active", s.get("started_at", 0))) < 300
-            )
+            s["is_active"], s["bg_active"] = _session_activity_flags(s, now)
             s["archived"] = bool(s.get("archived"))
             if selected:
                 s["profile"] = selected
