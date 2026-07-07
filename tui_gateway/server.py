@@ -3440,10 +3440,15 @@ def _on_tool_start(sid: str, tool_call_id: str, name: str, args: dict):
             pass
         session.setdefault("tool_started_at", {})[tool_call_id] = time.time()
     if _tool_progress_enabled(sid):
+        try:
+            _input_json = json.dumps(args or {}, ensure_ascii=False, default=str)
+        except Exception:
+            _input_json = ""
         payload = {
             "tool_id": tool_call_id,
             "name": name,
             "context": _tool_ctx(name, args),
+            "input_json": _input_json,
         }
         if _session_verbose(sid):
             args_text = _tool_args_text(args)
